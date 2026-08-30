@@ -13,6 +13,17 @@ import requests
 URL = "https://round-snowflake-9c31.devops-118.workers.dev/"
 
 
+def fetch_orders():
+    """Fetch the latest raw orders from the live endpoint and normalize them."""
+    response = requests.get(URL, timeout=30)
+    response.raise_for_status()
+    payload = response.json()
+
+    data = payload.get("data", {})
+    raw_orders = data.get("orders", [])
+    return decode_orders(raw_orders)
+
+
 def parse_ticker(ticker: str) -> str:
     """Extract the underlying symbol from a ticker like BTC-31AUG26-77500-P."""
     if not ticker:
@@ -26,6 +37,7 @@ def decode_orders(raw_orders):
 
     for order in raw_orders:
         raw_order = order.get("order", {})
+        greeks = order.get("greeks", raw_order.get("greeks", {}))
 
         ticker = raw_order.get("ticker", "")
         underlying = parse_ticker(ticker)
@@ -37,8 +49,6 @@ def decode_orders(raw_orders):
         premium = int(raw_order.get("price", 0)) / 10**6
         max_collateral = int(raw_order.get("maxCollateralUsable", 0)) / 10**6
 
-        greeks = raw_order.get("greeks", {})
-
         normalized.append(
             {
                 "ticker": ticker,
@@ -48,6 +58,7 @@ def decode_orders(raw_orders):
                 "expiry_timestamp": expiry,
                 "premium_usd": premium,
                 "max_collateral_usd": max_collateral,
+                "delta": greeks.get("delta"),
                 "greeks": greeks,
             }
         )
@@ -56,14 +67,7 @@ def decode_orders(raw_orders):
 
 
 def main():
-    response = requests.get(URL, timeout=30)
-    response.raise_for_status()
-    payload = response.json()
-
-    data = payload.get("data", {})
-    raw_orders = data.get("orders", [])
-
-    decoded = decode_orders(raw_orders)
+    decoded = fetch_orders()
 
     print("Decoded orders (first 5):")
     pprint(decoded[:5])
