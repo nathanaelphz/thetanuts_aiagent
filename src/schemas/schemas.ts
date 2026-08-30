@@ -35,7 +35,7 @@ export interface OptionOrder {
     extraOptionData: string;
     signature: string;
     nonce: string;
-    greeks?: OptionGreeks;
+    greeks?: OptionGreeks | undefined;
 }
 
 /*

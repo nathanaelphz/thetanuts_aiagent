@@ -1,22 +1,25 @@
 import { checkConnection } from "./client.js";
-import { fetchLiveOrders, getMarketPrices, previewFill } from "./orders.js";
+import { getMarketPrices } from "./orders.js";
 
 async function main() {
-  console.log("=== Step 1: Checking wallet connection ===");
+  console.log("=== Thetanuts Connection Test ===");
+
+  console.log("\n=== Step 1: Checking client connection ===");
   await checkConnection();
+  console.log("✓ Client connection successful");
 
-  console.log("\n=== Step 2: Fetching live market prices ===");
-  await getMarketPrices();
+  console.log("\n=== Step 2: Testing market data API ===");
+  const marketData = await getMarketPrices();
 
-  console.log("\n=== Step 3: Fetching live orders ===");
-  const orders = await fetchLiveOrders();
+  console.log("✓ Market data API successful");
+  console.log("Available assets:", Object.keys(marketData.prices));
 
-  if (orders.length > 0) {
-    console.log("\n=== Step 4: Previewing a fill (no money spent) ===");
-    previewFill(orders[0], 10_000000n); // preview a $10 fill
-  } else {
-    console.log("No live orders available to preview right now.");
-  }
+  console.log("\n=== Connection Test Passed ===");
 }
 
-main().catch((err) => console.error("Test failed:", err));
+main().catch((err) => {
+  console.error("\n✗ Connection test failed:");
+  console.error(err);
+  process.exit(1);
+});
+
