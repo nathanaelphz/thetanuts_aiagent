@@ -1,4 +1,5 @@
 import { client } from "./client.js";
+<<<<<<< HEAD
 import {
   normalizeOptionOrder,
   normalizeOptionBookData,
@@ -19,16 +20,30 @@ export async function fetchLiveOrders(): Promise<OptionOrder[]> {
   const validOrders = orders.filter((o: any) => Number(o.order.expiry) > now + 60); // 60s safety buffer
   console.log(`Found ${validOrders.length} valid orders (of ${orders.length} total)`);
   return validOrders.map(normalizeOptionOrder);
+=======
+import { log } from "./logger.js";
+
+export async function fetchLiveOrders() {
+  log("FETCH_ORDERS", "Fetching live orders from Thetanuts...");
+  const orders = await client.api.fetchOrders();
+  const now = Math.floor(Date.now() / 1000);
+  const validOrders = orders.filter((o: any) => Number(o.order.expiry) > now + 60);
+  log("FETCH_ORDERS", `Found ${validOrders.length} valid orders (of ${orders.length} total)`);
+  return validOrders;
+>>>>>>> b85cb9b9016f70da5d84bb4eef4c4e0558f221ba
 }
 
-// Get live BTC/ETH prices
 export async function getMarketPrices() {
+  log("MARKET_PRICES", "Fetching live market prices...");
   const marketData = await client.api.getMarketData();
-  console.log(`BTC: $${marketData.prices.BTC}`);
-  console.log(`ETH: $${marketData.prices.ETH}`);
+  log("MARKET_PRICES", "Prices retrieved", {
+    BTC: marketData.prices.BTC,
+    ETH: marketData.prices.ETH,
+  });
   return marketData;
 }
 
+<<<<<<< HEAD
 // Build the complete OptionBookData contract
 export async function fetchOptionBookData(): Promise<OptionBookData> {
   const rawOrders = await client.api.fetchOrders();
@@ -50,9 +65,14 @@ export async function fetchOptionBookData(): Promise<OptionBookData> {
 
 
 // Preview what filling an order would cost, WITHOUT executing it
+=======
+>>>>>>> b85cb9b9016f70da5d84bb4eef4c4e0558f221ba
 export function previewFill(order: any, usdcAmount: bigint) {
   const preview = client.optionBook.previewFillOrder(order, usdcAmount);
-  console.log(`Contracts: ${preview.numContracts}, Collateral: ${preview.totalCollateral}`);
+  log("PREVIEW_FILL", "Fill preview calculated", {
+    numContracts: preview.numContracts,
+    totalCollateral: preview.totalCollateral,
+  });
   return preview;
 }
 
