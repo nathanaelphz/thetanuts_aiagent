@@ -3,34 +3,64 @@ import logging
 import os
 from typing import Optional
 
+from dotenv import load_dotenv
+
+load_dotenv()
+
 from openai import OpenAI
 from pydantic import ValidationError
 
+from compute import compute_derived_fields, passes_rules
 from deterministic_check import cross_check, deterministic_filter
 from fetch_and_decode import fetch_orders
 from prompt import SYSTEM_PROMPT
 from sanitize import sanitize_orders
-from schema import RankedCandidates, TradeCandidate
+from schema import AIShortlist, RankedCandidates, TradeCandidate
 
 logging.basicConfig(level=logging.WARNING)
 
 
-def parse_candidates_safely(raw_candidates: list[dict]) -> RankedCandidates:
+def parse_candidates_safely(raw_candidates: list[dict], orders: list[dict]) -> RankedCandidates:
     """
-    Validates each candidate individually instead of all-or-nothing.
-    A single bad candidate is dropped and logged — it doesn't invalidate
-    the whole batch. This is the correct behavior: we want to keep every
-    genuinely valid recommendation, not throw everything away over one
-    borderline violation.
+    Rebuilds the shortlist from real order data rather than trusting the AI's
+    self-reported values. The AI is only allowed to propose tickers and
+    reasoning; Python independently recomputes the numbers and validates them.
     """
-    valid = []
-    for i, c in enumerate(raw_candidates):
-        try:
-            valid.append(TradeCandidate.model_validate(c))
-        except ValidationError as e:
-            print(f"⚠️  Dropped candidate #{i} ({c.get('ticker', 'unknown')}): {e}")
+    order_lookup = {order["ticker"]: order for order in orders}
+    verified = []
 
-    return RankedCandidates(candidates=valid)
+    for i, item in enumerate(raw_candidates):
+        ticker = item.ticker
+        reasoning = item.reasoning
+
+        if not ticker:
+            print(f"⚠️ AI candidate #{i} missing ticker — dropped")
+            continue
+
+        order = order_lookup.get(ticker)
+        if order is None:
+            print(f"⚠️ AI proposed ticker '{ticker}' not found in real order data — dropped (possible hallucination)")
+            continue
+
+        derived = compute_derived_fields(order)
+        ok, reason = passes_rules(order, derived)
+        if not ok:
+            print(f"⚠️ AI proposed ticker '{ticker}' failed verification: {reason} — dropped")
+            continue
+
+        verified.append(
+            TradeCandidate(
+                ticker=ticker,
+                yield_pct=derived["yield_pct"],
+                delta=float(order["delta"]),
+                expiry_days=derived["expiry_days"],
+                max_collateral_usd=float(order.get("max_collateral_usd", 0.0)),
+                reasoning=reasoning,
+            )
+        )
+
+    ranked = RankedCandidates(candidates=sorted(verified, key=lambda c: c.yield_pct, reverse=True))
+    return ranked
 
 
 # This helper centralizes the model invocation and keeps the top-level script simple.
@@ -59,6 +89,7 @@ def get_ranked_candidates(orders: list) -> Optional[RankedCandidates]:
         response = client.chat.completions.create(
             model=model,
             messages=messages,
+            max_tokens=4096,
         )
 
         raw_text = response.choices[0].message.content
@@ -66,8 +97,8 @@ def get_ranked_candidates(orders: list) -> Optional[RankedCandidates]:
             raise ValueError("LLM returned an empty message content")
 
         parsed = json.loads(raw_text)
-        raw_candidates = parsed.get("candidates", [])
-        ranked = parse_candidates_safely(raw_candidates)
+        shortlist = AIShortlist.model_validate(parsed)
+        ranked = parse_candidates_safely(shortlist.candidates, orders)
 
         print("Validated ranked candidates:")
         print(ranked.model_dump_json(indent=2))

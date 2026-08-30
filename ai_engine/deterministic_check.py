@@ -1,4 +1,4 @@
-from datetime import datetime, timezone
+from compute import compute_derived_fields, passes_rules
 
 YIELD_MIN_PCT = 3.0
 DELTA_MAX_ABS = 0.30
@@ -10,36 +10,22 @@ ALLOWED_UNDERLYINGS = {"BTC", "ETH"}
 def deterministic_filter(orders: list[dict]) -> list[dict]:
     """
     Independent, rule-based cross-check — no LLM involved.
-    Computes qualifying trades with plain arithmetic, as ground truth
-    to compare against the AI's shortlist.
+    Uses the shared compute.py logic as the single source of truth for
+    yield and expiry math so the AI and deterministic filter can never drift.
     """
-    now = datetime.now(timezone.utc).timestamp()
     qualifying = []
 
     for o in orders:
-        if o.get("underlying") not in ALLOWED_UNDERLYINGS:
-            continue
-
-        delta = o.get("delta")
-        if delta is None or abs(delta) > DELTA_MAX_ABS:
-            continue
-
-        expiry_days = (o["expiry_timestamp"] - now) / 86400
-        if not (EXPIRY_MIN_DAYS <= expiry_days <= EXPIRY_MAX_DAYS):
-            continue
-
-        collateral = o.get("max_collateral_usd", 0)
-        if collateral <= 0:
-            continue
-        yield_pct = (o["premium_usd"] / collateral) * 100
-        if yield_pct < YIELD_MIN_PCT:
+        derived = compute_derived_fields(o)
+        ok, _ = passes_rules(o, derived)
+        if not ok:
             continue
 
         qualifying.append({
             "ticker": o["ticker"],
-            "yield_pct": round(yield_pct, 3),
-            "delta": delta,
-            "expiry_days": round(expiry_days, 2),
+            "yield_pct": derived["yield_pct"],
+            "delta": o.get("delta"),
+            "expiry_days": derived["expiry_days"],
         })
 
     return sorted(qualifying, key=lambda x: x["yield_pct"], reverse=True)

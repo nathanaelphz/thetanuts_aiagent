@@ -3,6 +3,15 @@ from typing import List
 from pydantic import BaseModel, field_validator
 
 
+class AICandidate(BaseModel):
+    ticker: str
+    reasoning: str
+
+
+class AIShortlist(BaseModel):
+    candidates: list[AICandidate]
+
+
 class TradeCandidate(BaseModel):
     ticker: str
     yield_pct: float
@@ -35,11 +44,3 @@ class TradeCandidate(BaseModel):
 
 class RankedCandidates(BaseModel):
     candidates: List[TradeCandidate]
-
-    @field_validator("candidates")
-    @classmethod
-    def sorted_by_yield_desc(cls, v):
-        yields = [c.yield_pct for c in v]
-        if yields != sorted(yields, reverse=True):
-            raise ValueError("candidates are not sorted by yield_pct descending as required")
-        return v
