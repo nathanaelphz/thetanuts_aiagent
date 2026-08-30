@@ -54,14 +54,14 @@ export interface OptionBookData {
 Current underlying market condition
 */
 
+export interface VolatilityData {
+    current: number;
+    forecast: number[];
+}
+
 export interface MarketState {
     prices: Record<string, number>;
-    volatility: Record<string, 
-    {
-        current: number;
-        forecast: number[];
-    }
-    >;
+    volatility: Record<string, VolatilityData>;
 }
 
 /*
@@ -81,7 +81,7 @@ Request made by AI agent when it needs market data
 export interface MarketDataRequest {
     asset: string;
     includeOptions: boolean;
-    includeMarket: boolean;
+    includeMarketState: boolean;
     optionType?: "call" | "put" | "both";
     side?: "long" | "short" | "both";
     expiryAfter?: number;
