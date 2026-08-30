@@ -66,6 +66,11 @@ def sanitize_order(order: dict) -> dict | None:
             logger.warning(f"Rejected order {ticker}: bad max_collateral_usd: {max_collateral_usd!r}")
             return None
 
+        collateral_for_fill_usd = order.get("collateral_for_fill_usd")
+        if not isinstance(collateral_for_fill_usd, (int, float)) or collateral_for_fill_usd <= 0:
+            logger.warning(f"Rejected order {ticker}: bad collateral_for_fill_usd: {collateral_for_fill_usd!r}")
+            return None
+
         expiry_timestamp = order.get("expiry_timestamp")
         if not isinstance(expiry_timestamp, (int, float)) or expiry_timestamp <= 0:
             logger.warning(f"Rejected order {ticker}: bad expiry_timestamp: {expiry_timestamp!r}")
@@ -79,6 +84,7 @@ def sanitize_order(order: dict) -> dict | None:
             "delta": float(delta),
             "premium_usd": float(premium_usd),
             "max_collateral_usd": float(max_collateral_usd),
+            "collateral_for_fill_usd": float(collateral_for_fill_usd),
             "expiry_timestamp": float(expiry_timestamp),
         }
 

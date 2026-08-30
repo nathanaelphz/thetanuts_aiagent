@@ -9,7 +9,7 @@ def compute_derived_fields(order: dict) -> dict:
     """
     now = datetime.now(timezone.utc).timestamp()
     expiry_days = (order["expiry_timestamp"] - now) / 86400
-    collateral = order.get("max_collateral_usd", 0)
+    collateral = order.get("collateral_for_fill_usd", order.get("max_collateral_usd", 0))
     yield_pct = (order["premium_usd"] / collateral * 100) if collateral > 0 else 0.0
     return {
         "yield_pct": round(yield_pct, 3),

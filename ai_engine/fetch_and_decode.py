@@ -38,6 +38,7 @@ def decode_orders(raw_orders):
     for order in raw_orders:
         raw_order = order.get("order", {})
         greeks = order.get("greeks", raw_order.get("greeks", {}))
+        demo_fill_preview = raw_order.get("demoFillPreview") or order.get("demoFillPreview") or {}
 
         ticker = raw_order.get("ticker", "")
         underlying = parse_ticker(ticker)
@@ -48,6 +49,8 @@ def decode_orders(raw_orders):
         strikes = [s / 10**8 for s in raw_order.get("strikes", [])]
         premium = int(raw_order.get("price", 0)) / 10**6
         max_collateral = int(raw_order.get("maxCollateralUsable", 0)) / 10**6
+        total_collateral_raw = demo_fill_preview.get("totalCollateral")
+        collateral_for_fill_usd = float(total_collateral_raw) / 1_000_000 if total_collateral_raw is not None else 0.0
 
         normalized.append(
             {
@@ -58,6 +61,7 @@ def decode_orders(raw_orders):
                 "expiry_timestamp": expiry,
                 "premium_usd": premium,
                 "max_collateral_usd": max_collateral,
+                "collateral_for_fill_usd": collateral_for_fill_usd,
                 "delta": greeks.get("delta"),
                 "greeks": greeks,
             }
