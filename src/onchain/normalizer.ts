@@ -68,6 +68,8 @@ export function normalizeOptionBookData(
   };
 }
 
+// normalize market state from raw price and weather data
+
 export function normalizeMarketState(
   rawPrices: Record<string, number>,
   rawWeather: Record<string, any>,
@@ -86,6 +88,8 @@ export function normalizeMarketState(
     volatility,
   };
 }
+
+// normalize the complete TradingMarketData contract
 
 export function normalizeTradingMarketData(
   market: MarketState,
