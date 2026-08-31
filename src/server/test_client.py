@@ -3,11 +3,12 @@ Smoke test for MarketDataClient against a running server.ts instance.
 
 Usage:
     python -m src.server.test_client
+    python -m src.server.test_client --dump   (also writes sample JSON files)
 """
 
 import asyncio
+import json
 import sys
-from typing import Optional, Literal
 
 from .client import (
     MarketDataClient,
@@ -16,7 +17,17 @@ from .client import (
 )
 
 
+def dump_to_file(data, filename: str):
+    """Write a Pydantic model to a JSON file for inspection / handoff."""
+    with open(filename, "w") as f:
+        # model_dump_json handles nested models cleanly, indent for readability
+        f.write(data.model_dump_json(indent=2))
+    print(f"   💾 Saved to {filename}")
+
+
 async def main():
+    dump_mode = "--dump" in sys.argv
+
     client = MarketDataClient()
 
     print(f"Testing against: {client.base_url}")
@@ -30,7 +41,7 @@ async def main():
         sys.exit(1)
     print("   ✅ server.ts is up")
 
-    test_asset = "cbBTC"  # adjust to your actual asset identifier
+    test_asset = "cbBTC"
 
     # --- Unfiltered baseline ---
     print(f"\n2. Fetching unfiltered market data for asset='{test_asset}'...")
@@ -42,6 +53,8 @@ async def main():
         )
         total_orders = len(data.optionBook.orders) if data.optionBook else 0
         print(f"   ✅ Received {total_orders} orders (unfiltered)")
+        if dump_mode:
+            dump_to_file(data, "sample_market_data_unfiltered.json")
     except (MarketDataUnavailableError, MarketDataInvalidResponseError) as e:
         print(f"   ❌ {e}")
         await client.close()
@@ -61,11 +74,13 @@ async def main():
         filtered_orders = filtered.optionBook.orders if filtered.optionBook else []
         print(f"   ✅ Received {len(filtered_orders)} orders (should be ≤ 5)")
 
-        # Verify filter correctness
         for o in filtered_orders:
             assert o.isCall is True, f"Expected isCall=True, got {o.isCall}"
             assert o.greeks is not None, "Expected greeks to be present, got None"
         print("   ✅ All returned orders are calls with non-null greeks")
+
+        if dump_mode:
+            dump_to_file(filtered, "sample_market_data_filtered_calls.json")
 
     except (MarketDataUnavailableError, MarketDataInvalidResponseError) as e:
         print(f"   ❌ {e}")
@@ -94,6 +109,9 @@ async def main():
             assert o.isLong is False, f"Expected isLong=False (short), got {o.isLong}"
         print("   ✅ All returned orders are short puts")
 
+        if dump_mode:
+            dump_to_file(puts_short, "sample_market_data_short_puts.json")
+
     except (MarketDataUnavailableError, MarketDataInvalidResponseError) as e:
         print(f"   ❌ {e}")
         await client.close()
@@ -108,6 +126,8 @@ async def main():
 
     print("\n" + "-" * 50)
     print("All filter smoke tests passed.")
+    if dump_mode:
+        print("Sample JSON files written to current directory.")
 
 
 if __name__ == "__main__":
