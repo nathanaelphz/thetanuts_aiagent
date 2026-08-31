@@ -67,10 +67,9 @@ export interface MarketState {
 /*
 Combined market information given to the AI agent
 */
-
 export interface TradingMarketData {
-    market: MarketState;
-    optionBook: OptionBookData;
+    market?: MarketState;
+    optionBook?: OptionBookData;
     retrievedAt: number;
 }
 
@@ -88,5 +87,6 @@ export interface MarketDataRequest {
     expiryBefore?: number;
     strikeMin?: number;
     strikeMax?: number;
+    requireGreeks?: boolean;
     limit?: number;
 }

@@ -92,8 +92,8 @@ export function normalizeMarketState(
 // normalize the complete TradingMarketData contract
 
 export function normalizeTradingMarketData(
-  market: MarketState,
-  optionBook: OptionBookData,
+  market: MarketState | undefined,
+  optionBook: OptionBookData | undefined,
 ): TradingMarketData {
   return {
     market,
