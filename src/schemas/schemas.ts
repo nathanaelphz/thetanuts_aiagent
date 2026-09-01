@@ -13,6 +13,12 @@ export interface OptionGreeks {
     vega: number;
 }
 
+export interface DemoFillPreview {
+    fillSizeUsdc?: string | number;
+    numContracts?: string | number;
+    totalCollateral?: string | number;
+}
+
 /*
 A single option order retrived from Thetanuts Optionbook
 
@@ -36,6 +42,7 @@ export interface OptionOrder {
     signature: string;
     nonce: string;
     greeks?: OptionGreeks | undefined;
+    demoFillPreview?: DemoFillPreview;
 }
 
 /*

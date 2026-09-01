@@ -7,7 +7,7 @@ import type {
     TradingMarketData
 } from "../schemas/schemas.js";
 
-// normalize a raw order from Thetanuts API 
+// normalize a raw order from Thetanuts API
 
 export function normalizeOptionOrder(raw: any): OptionOrder {
   const order = raw.order;
@@ -27,7 +27,12 @@ export function normalizeOptionOrder(raw: any): OptionOrder {
       }
     : undefined;
 
-    return {
+  const rawDemoFillPreview =
+    raw.demoFillPreview ??
+    raw.order?.demoFillPreview ??
+    raw.rawApiData?.demoFillPreview;
+
+  const normalizedOrder: OptionOrder = {
     maker: order.maker,
     orderExpiryTimestamp: Number(api.orderExpiryTimestamp),
     expiry: Number(order.expiry),
@@ -42,9 +47,20 @@ export function normalizeOptionOrder(raw: any): OptionOrder {
     numContracts: String(order.numContracts ?? "0"),
     extraOptionData: api.extraOptionData,
     signature: raw.signature,
-    nonce: String(order.nonce),   // BigInt — must stay a string, exceeds Number.MAX_SAFE_INTEGER
+    nonce: String(order.nonce),
     greeks,
+    ...(rawDemoFillPreview
+      ? {
+          demoFillPreview: {
+            fillSizeUsdc: rawDemoFillPreview.fillSizeUsdc ?? undefined,
+            numContracts: rawDemoFillPreview.numContracts ?? undefined,
+            totalCollateral: rawDemoFillPreview.totalCollateral ?? undefined,
+          },
+        }
+      : {}),
   };
+
+  return normalizedOrder;
 }
 
 // normalize a set of raw orders on optionbook into OptionBookData
@@ -96,8 +112,8 @@ export function normalizeTradingMarketData(
   optionBook: OptionBookData | undefined,
 ): TradingMarketData {
   return {
-    market,
-    optionBook,
+    ...(market ? { market } : {}),
+    ...(optionBook ? { optionBook } : {}),
     retrievedAt: Date.now(),
   };
 }

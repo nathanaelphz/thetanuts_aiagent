@@ -16,6 +16,13 @@ class OptionGreeks(BaseModel):
     theta: float
     vega: float
 
+
+class DemoFillPreview(BaseModel):
+    fillSizeUsdc: Optional[float | int | str] = None
+    numContracts: Optional[float | int | str] = None
+    totalCollateral: Optional[float | int | str] = None
+
+
 """
 A single option order retrived from Thetanuts Optionbook
 
@@ -39,6 +46,7 @@ class OptionOrder(BaseModel):
     signature: str
     nonce: str
     greeks: Optional[OptionGreeks] = None
+    demoFillPreview: Optional[DemoFillPreview] = None
 
 
 """

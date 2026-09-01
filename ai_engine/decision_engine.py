@@ -1,13 +1,16 @@
 import json
 import logging
 import os
+import re
+import threading
+import time
 from typing import Optional
 
 from dotenv import load_dotenv
 
 load_dotenv()
 
-from openai import OpenAI
+from openai import APITimeoutError, OpenAI
 from pydantic import ValidationError
 
 from compute import compute_derived_fields, passes_rules
@@ -51,7 +54,7 @@ def parse_candidates_safely(raw_candidates: list[dict], orders: list[dict]) -> R
         verified.append(
             TradeCandidate(
                 ticker=ticker,
-                yield_pct=derived["yield_pct"],
+                cost_per_delta=derived["cost_per_delta"],
                 delta=float(order["delta"]),
                 expiry_days=derived["expiry_days"],
                 max_collateral_usd=float(order.get("max_collateral_usd", 0.0)),
@@ -59,7 +62,7 @@ def parse_candidates_safely(raw_candidates: list[dict], orders: list[dict]) -> R
             )
         )
 
-    ranked = RankedCandidates(candidates=sorted(verified, key=lambda c: c.yield_pct, reverse=True))
+    ranked = RankedCandidates(candidates=sorted(verified, key=lambda c: c.cost_per_delta))
     return ranked
 
 
@@ -74,31 +77,101 @@ def get_ranked_candidates(orders: list) -> Optional[RankedCandidates]:
         print("Missing Gonka config: set GONKA_API_KEY, GONKA_BASE_URL, and GONKA_MODEL.")
         return None
 
-    client = OpenAI(api_key=api_key, base_url=base_url)
+    client = OpenAI(api_key=api_key, base_url=base_url, timeout=60.0)
+
+    expiry_filtered_orders = [
+        order
+        for order in orders
+        if 3 <= compute_derived_fields(order)["expiry_days"] <= 10
+    ]
+    print(
+        f"Filtered {len(orders)} orders down to {len(expiry_filtered_orders)} "
+        "within the 3-10 day expiry window"
+    )
+
+    llm_orders = expiry_filtered_orders
+    if len(llm_orders) > 80:
+        llm_orders = sorted(
+            llm_orders,
+            key=lambda order: abs(float(order.get("delta", 0.0))),
+        )[:80]
+        print(
+            f"Capped {len(expiry_filtered_orders)} expiry-qualified orders down to "
+            "80 by delta closeness before sending to LLM"
+        )
 
     try:
-        # Debug the exact payload before the API call so we can catch silent data-loss issues.
-        print("=== SENDING TO LLM ===")
-        print(json.dumps(orders, indent=2)[:2000])
+        print(f"Sending {len(llm_orders)} orders to LLM")
 
         messages = [
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": json.dumps(orders, ensure_ascii=False)},
+            {"role": "user", "content": json.dumps(llm_orders, ensure_ascii=False)},
         ]
 
-        response = client.chat.completions.create(
-            model=model,
-            messages=messages,
-            max_tokens=4096,
-        )
+        try:
+            stop_waiting = threading.Event()
+            waiting_started = time.monotonic()
 
-        raw_text = response.choices[0].message.content
-        if raw_text is None:
-            raise ValueError("LLM returned an empty message content")
+            def show_waiting_indicator():
+                while not stop_waiting.is_set():
+                    elapsed = int(time.monotonic() - waiting_started)
+                    print(f"\rWaiting for LLM response... {elapsed}s", end="", flush=True)
+                    stop_waiting.wait(2.5)
 
-        parsed = json.loads(raw_text)
-        shortlist = AIShortlist.model_validate(parsed)
-        ranked = parse_candidates_safely(shortlist.candidates, orders)
+            waiting_thread = threading.Thread(target=show_waiting_indicator, daemon=True)
+            waiting_thread.start()
+            try:
+                try:
+                    response = client.chat.completions.create(
+                        model=model,
+                        messages=messages,
+                        max_tokens=12000,
+                        reasoning_effort="low",
+                    )
+                except APITimeoutError:
+                    print("⚠️ LLM request timed out after 60s — the provider may be under load. Try again.")
+                    return RankedCandidates(candidates=[])
+            finally:
+                stop_waiting.set()
+                waiting_thread.join()
+                print("\r", end="", flush=True)
+
+            finish_reason = response.choices[0].finish_reason if response and response.choices else "N/A"
+            usage = getattr(response, "usage", None)
+            prompt_tokens = getattr(usage, "prompt_tokens", "n/a") if usage else "n/a"
+            completion_tokens = getattr(usage, "completion_tokens", "n/a") if usage else "n/a"
+            total_tokens = getattr(usage, "total_tokens", "n/a") if usage else "n/a"
+            print(
+                f"LLM finish_reason={finish_reason}; prompt_tokens={prompt_tokens}, "
+                f"completion_tokens={completion_tokens}, total_tokens={total_tokens}"
+            )
+
+            raw_text = response.choices[0].message.content if response and response.choices else ""
+
+            if raw_text is None:
+                raw_text = ""
+
+            cleaned_text = re.sub(r"<think>.*?</think>", "", raw_text, flags=re.DOTALL).strip()
+
+            if finish_reason == "length" and not cleaned_text:
+                print("⚠️ LLM response was truncated (finish_reason=length) — the model ran out of tokens before completing its answer. Consider reducing order count further or increasing max_tokens.")
+                return RankedCandidates(candidates=[])
+
+            try:
+                parsed = json.loads(cleaned_text)
+            except json.JSONDecodeError:
+                if "<think>" in raw_text:
+                    print("⚠️ Response contained only reasoning, no completed JSON answer — likely truncated mid-thought")
+                    return RankedCandidates(candidates=[])
+                if finish_reason == "length":
+                    print("⚠️ LLM response was truncated (finish_reason=length) — the model ran out of tokens before completing its answer. Consider reducing order count further or increasing max_tokens.")
+                    return RankedCandidates(candidates=[])
+                raise
+
+            shortlist = AIShortlist.model_validate(parsed)
+            ranked = parse_candidates_safely(shortlist.candidates, orders)
+        except Exception:
+            raise
 
         print("Validated ranked candidates:")
         print(ranked.model_dump_json(indent=2))
@@ -119,19 +192,25 @@ def present_and_select(ranked: RankedCandidates):
         print("No qualifying trades right now.")
         return None
 
-    print("\n=== QUALIFYING TRADES (ranked by yield) ===")
+    print("\n=== QUALIFYING TRADES (ranked by cost efficiency) ===")
     for i, c in enumerate(ranked.candidates):
         print(
-            f"[{i}] {c.ticker} | yield {c.yield_pct:.2f}% | delta {c.delta:.3f} | "
+            f"[{i}] {c.ticker} | cost efficiency ${c.cost_per_delta:.2f}/delta | delta {c.delta:.3f} | "
             f"expires in {c.expiry_days:.1f}d | max capacity ${c.max_collateral_usd:,.0f}"
         )
         print(f"    reasoning: {c.reasoning}")
 
-    choice = input("\nEnter number to select (or 'skip'): ").strip()
-    if choice.lower() == "skip":
-        return None
+    while True:
+        choice = input("\nEnter number to select (or 'skip'): ").strip()
+        if choice.lower() == "skip":
+            return None
 
-    selected = ranked.candidates[int(choice)]
+        try:
+            selected = ranked.candidates[int(choice)]
+            break
+        except (ValueError, IndexError):
+            print("Invalid input — enter a number from the list, or 'skip'")
+
     size = float(input(f"How much collateral (USD) to use on {selected.ticker}? "))
 
     # This is where Person 4's safety check should run next, before execution.

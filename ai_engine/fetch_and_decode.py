@@ -1,78 +1,109 @@
-"""Temporary exploration script for decoding live options payloads.
+"""Fetch and normalize live option orders from the TypeScript server API."""
 
-This is throwaway code used to sanity-check the raw order data before the
-official normalized format from Person 2 is available.
-"""
+import os
+import sys
 
-import json
+sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")))
+
+import asyncio
+from datetime import datetime, timezone
 from pprint import pprint
 
-import requests
+from src.server.client import MarketDataClient
 
 
-URL = "https://round-snowflake-9c31.devops-118.workers.dev/"
+def synthesize_ticker(order: dict, asset: str) -> str:
+    """Build a stable ticker from the normalized order contract.
+
+    This matches the historic AI format: SYMBOL-DDMMMYY-STRIKE-C/P.
+    The strike scale is still an assumption and should be confirmed against a live
+    sample once the upstream feed is inspected more closely.
+    """
+    expiry_ts = order.get("expiry")
+    strikes = order.get("strikes") or []
+    strike_raw = strikes[0] if strikes else 0
+    strike_usd = strike_raw / 1e8 if strike_raw else 0
+
+    expiry_date = datetime.fromtimestamp(expiry_ts, tz=timezone.utc).strftime("%d%b%y").upper()
+    kind = "C" if order.get("isCall") else "P"
+    return f"{asset.upper()}-{expiry_date}-{int(strike_usd)}-{kind}"
 
 
-def fetch_orders():
-    """Fetch the latest raw orders from the live endpoint and normalize them."""
-    response = requests.get(URL, timeout=30)
-    response.raise_for_status()
-    payload = response.json()
+def _normalize_order(order: dict, asset: str) -> dict | None:
+    """Convert a normalized server order to the legacy AI-engine format."""
+    expiry = order.get("expiry")
+    if expiry is None:
+        return None
 
-    data = payload.get("data", {})
-    raw_orders = data.get("orders", [])
-    return decode_orders(raw_orders)
+    greeks = order.get("greeks") or {}
+    demo_fill = order.get("demoFillPreview") or {}
+    total_collateral_raw = demo_fill.get("totalCollateral")
+
+    collateral_for_fill_usd = (
+        float(total_collateral_raw) / 1_000_000
+        if total_collateral_raw is not None
+        else None
+    )
+    raw_price = int(order.get("price", 0))
+    raw_num_contracts = float(demo_fill["numContracts"]) if demo_fill and demo_fill.get("numContracts") is not None else None
+    premium_for_fill_usd = (
+        (raw_price / 1e8) * (raw_num_contracts / 1e6)
+        if raw_num_contracts is not None
+        else None
+    )
+
+    return {
+        "ticker": synthesize_ticker(order, asset),
+        "underlying": asset,
+        "is_call": bool(order.get("isCall")),
+        "delta": greeks.get("delta") if isinstance(greeks, dict) else None,
+        "premium_usd": raw_price / 1e8,
+        "premium_for_fill_usd": premium_for_fill_usd,
+        "max_collateral_usd": int(order.get("maxCollateralUsable", 0)) / 1_000_000,
+        "collateral_for_fill_usd": collateral_for_fill_usd,
+        "expiry_timestamp": int(expiry),
+    }
 
 
-def parse_ticker(ticker: str) -> str:
-    """Extract the underlying symbol from a ticker like BTC-31AUG26-77500-P."""
-    if not ticker:
-        return ""
-    return ticker.split("-")[0]
+async def _fetch_asset_orders(client: MarketDataClient, asset: str) -> list[dict]:
+    """Fetch a single asset's option book and normalize it for downstream AI logic."""
+    data = await client.fetch_market_data(
+        asset=asset,
+        include_options=True,
+        include_market_state=True,
+        require_greeks=True,
+    )
 
+    if not data.optionBook:
+        return []
 
-def decode_orders(raw_orders):
-    """Convert raw integer-scaled fields into human-readable USD values."""
     normalized = []
-
-    for order in raw_orders:
-        raw_order = order.get("order", {})
-        greeks = order.get("greeks", raw_order.get("greeks", {}))
-        demo_fill_preview = raw_order.get("demoFillPreview") or order.get("demoFillPreview") or {}
-
-        ticker = raw_order.get("ticker", "")
-        underlying = parse_ticker(ticker)
-        is_call = bool(raw_order.get("isCall"))
-        expiry = raw_order.get("expiry")
-
-        # ASSUMPTION: verify these decimal counts with the team — not yet confirmed
-        strikes = [s / 10**8 for s in raw_order.get("strikes", [])]
-        premium = int(raw_order.get("price", 0)) / 10**6
-        max_collateral = int(raw_order.get("maxCollateralUsable", 0)) / 10**6
-        total_collateral_raw = demo_fill_preview.get("totalCollateral")
-        collateral_for_fill_usd = float(total_collateral_raw) / 1_000_000 if total_collateral_raw is not None else 0.0
-
-        normalized.append(
-            {
-                "ticker": ticker,
-                "underlying": underlying,
-                "is_call": is_call,
-                "strike_usd": strikes,
-                "expiry_timestamp": expiry,
-                "premium_usd": premium,
-                "max_collateral_usd": max_collateral,
-                "collateral_for_fill_usd": collateral_for_fill_usd,
-                "delta": greeks.get("delta"),
-                "greeks": greeks,
-            }
-        )
-
+    for order in data.optionBook.orders:
+        order_dict = order.model_dump() if hasattr(order, "model_dump") else order
+        converted = _normalize_order(order_dict, asset)
+        if converted is not None:
+            normalized.append(converted)
     return normalized
+
+
+def fetch_orders() -> list[dict]:
+    """Fetch BTC and ETH option books from the on-chain API and return AI-ready orders."""
+
+    async def _fetch_all():
+        client = MarketDataClient()
+        try:
+            merged = []
+            for asset in ("BTC", "ETH"):
+                merged.extend(await _fetch_asset_orders(client, asset))
+            return merged
+        finally:
+            await client.close()
+
+    return asyncio.run(_fetch_all())
 
 
 def main():
     decoded = fetch_orders()
-
     print("Decoded orders (first 5):")
     pprint(decoded[:5])
 

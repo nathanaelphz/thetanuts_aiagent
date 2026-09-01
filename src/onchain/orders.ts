@@ -12,13 +12,12 @@ import type {
   TradingMarketData
 } from "../schemas/schemas.js";
 
-// Fetch live option orders from Thetanuts, filtering out expired ones
+// Legacy compatibility helper retained for now.
+// The server path is using fetchOptionBookData(asset), which is the canonical
+// enriched path that attaches preview fill metadata before normalization.
 export async function fetchLiveOrders(): Promise<OptionOrder[]> {
-  const orders = await client.api.fetchOrders();
-  const now = Math.floor(Date.now() / 1000);
-  const validOrders = orders.filter((o: any) => Number(o.order.expiry) > now + 60); // 60s safety buffer
-  console.log(`Found ${validOrders.length} valid orders (of ${orders.length} total)`);
-  return validOrders.map(normalizeOptionOrder);
+  const optionBook = await fetchOptionBookData();
+  return optionBook.orders;
 }
 
 // Get live BTC/ETH prices
@@ -29,17 +28,55 @@ export async function getMarketPrices() {
   return marketData;
 }
 
-// Build the complete OptionBookData contract
-export async function fetchOptionBookData(): Promise<OptionBookData> {
-  const rawOrders = await client.api.fetchOrders();
+// Build the complete OptionBookData contract.
+// This is the canonical server-side path and must include preview fill data.
+export async function fetchOptionBookData(asset?: string): Promise<OptionBookData> {
+  let rawOrders: any[] = [];
+
+  try {
+    rawOrders = asset
+      ? await client.api.filterOrders({ asset })
+      : await client.api.fetchOrders();
+  } catch (error) {
+    console.warn(
+      `client.api.filterOrders({ asset: ${asset ?? "undefined"} }) failed; falling back to raw fetch + local asset filtering.`,
+      error,
+    );
+    rawOrders = await client.api.fetchOrders();
+  }
+
+  if (asset) {
+    const targetAsset = asset.toUpperCase();
+    const targetPriceFeed = client.chainConfig?.priceFeeds?.[targetAsset]?.toLowerCase();
+    rawOrders = rawOrders.filter((order: any) => {
+      const priceFeed = String(
+        order?.rawApiData?.priceFeed ?? order?.order?.priceFeed ?? ""
+      ).toLowerCase();
+      return targetPriceFeed ? priceFeed === targetPriceFeed : true;
+    });
+  }
+
   const now = Math.floor(Date.now() / 1000);
   const liveOrders = rawOrders.filter((o: any) => Number(o.order.expiry) > now + 60);
   console.log(`Found ${liveOrders.length} valid orders (of ${rawOrders.length} total)`);
+
+  const enrichedOrders = liveOrders.map((order: any) => {
+    const preview = client.optionBook.previewFillOrder(order, 20_000000n);
+    return {
+      ...order,
+      demoFillPreview: {
+        fillSizeUsdc: "20000000",
+        numContracts: String(preview.numContracts ?? "0"),
+        totalCollateral: String(preview.totalCollateral ?? "0"),
+      },
+    };
+  });
+
   const optionBookAddress = client.chainConfig.contracts.optionBook;
   if (!optionBookAddress) {throw new Error("Thetanuts OptionBook address is not configured");}
 
   return normalizeOptionBookData(
-    liveOrders,
+    enrichedOrders,
     client.chainConfig.chainId,
     optionBookAddress
     );
@@ -67,12 +104,26 @@ export async function getMarketWeather(): Promise<Record<string, { curVol: numbe
 }
 
 // Fetch and normalize the complete TradingMarketData contract
-export async function fetchTradingMarketData(): Promise<TradingMarketData> {
+export async function fetchTradingMarketData(params: {
+  asset?: string;
+  includeOptions?: boolean;
+  includeMarketState?: boolean;
+} = {}): Promise<TradingMarketData> {
+  const {
+    asset,
+    includeOptions = true,
+    includeMarketState = true,
+  } = params;
+
   const [optionBook, priceData, weatherData] = await Promise.all([
-    fetchOptionBookData(),
-    getMarketPrices(),
-    getMarketWeather(),
+    includeOptions ? fetchOptionBookData(asset) : Promise.resolve(undefined),
+    includeMarketState ? getMarketPrices() : Promise.resolve(undefined),
+    includeMarketState ? getMarketWeather() : Promise.resolve(undefined),
   ]);
-  const market = normalizeMarketState(priceData.prices, weatherData);
+
+  const market = includeMarketState && priceData && weatherData
+    ? normalizeMarketState(priceData.prices, weatherData)
+    : undefined;
+
   return normalizeTradingMarketData(market, optionBook);
 }
