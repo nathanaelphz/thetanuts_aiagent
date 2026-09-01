@@ -13,6 +13,12 @@ export interface OptionGreeks {
     vega: number;
 }
 
+export interface DemoFillPreview {
+    fillSizeUsdc?: string | number;
+    numContracts?: string | number;
+    totalCollateral?: string | number;
+}
+
 /*
 A single option order retrived from Thetanuts Optionbook
 
@@ -36,6 +42,7 @@ export interface OptionOrder {
     signature: string;
     nonce: string;
     greeks?: OptionGreeks | undefined;
+    demoFillPreview?: DemoFillPreview;
 }
 
 /*
@@ -67,10 +74,9 @@ export interface MarketState {
 /*
 Combined market information given to the AI agent
 */
-
 export interface TradingMarketData {
-    market: MarketState;
-    optionBook: OptionBookData;
+    market?: MarketState;
+    optionBook?: OptionBookData;
     retrievedAt: number;
 }
 
@@ -88,5 +94,6 @@ export interface MarketDataRequest {
     expiryBefore?: number;
     strikeMin?: number;
     strikeMax?: number;
+    requireGreeks?: boolean;
     limit?: number;
 }

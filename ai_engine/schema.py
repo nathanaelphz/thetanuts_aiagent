@@ -14,7 +14,7 @@ class AIShortlist(BaseModel):
 
 class TradeCandidate(BaseModel):
     ticker: str
-    yield_pct: float
+    cost_per_delta: float | None
     delta: float
     expiry_days: float
     max_collateral_usd: float
@@ -29,16 +29,16 @@ class TradeCandidate(BaseModel):
 
     @field_validator("delta")
     @classmethod
-    def delta_within_cap(cls, v):
-        if abs(v) > 0.30:
-            raise ValueError(f"delta {v} exceeds the 0.30 risk cap — AI violated its own rule")
+    def delta_within_range(cls, v):
+        if not (0.15 <= abs(v) <= 0.40):
+            raise ValueError(f"delta {v} is outside the 0.15-0.40 buyer range — AI violated its own rule")
         return v
 
-    @field_validator("yield_pct")
+    @field_validator("cost_per_delta")
     @classmethod
-    def yield_meets_minimum(cls, v):
-        if v < 3.0:
-            raise ValueError(f"yield_pct {v} is below the 3% minimum — AI violated its own rule")
+    def cost_per_delta_required(cls, v):
+        if v is None:
+            raise ValueError("cost_per_delta cannot be None — AI violated its own rule")
         return v
 
 

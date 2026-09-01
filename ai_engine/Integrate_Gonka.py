@@ -7,7 +7,7 @@ client = OpenAI(
 )
 
 response = client.chat.completions.create(
-    model="deepseek-ai/DeepSeek-V4-Flash-0731",   # e.g. "MiniMaxAI/MiniMax-M2.7" — check what your router supports
+    model="deepseek-ai/DeepSeek-V4-Flash-0731",
     messages=[
         {"role": "user", "content": "Say hello in one sentence."}
     ],
