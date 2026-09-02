@@ -30,27 +30,40 @@ def synthesize_ticker(order: dict, asset: str) -> str:
 
 
 def _normalize_order(order: dict, asset: str) -> dict | None:
-    """Convert a normalized server order to the legacy AI-engine format."""
+    """Convert a normalized server order to the legacy AI-engine format.
+    
+    Uses the SDK-calculated fill economics from demoFillPreview rather than
+    reconstructing them from price × numContracts. This avoids unit/scale mismatches
+    between CALL (which may use 18-decimal collateral) and PUT (6-decimal).
+    """
     expiry = order.get("expiry")
     if expiry is None:
         return None
 
     greeks = order.get("greeks") or {}
     demo_fill = order.get("demoFillPreview") or {}
+    
+    # SDK-provided fill economics (totalCollateral is the fill premium in fixed-point)
+    # Both are in USDC collateral decimals (6 decimals) as provided by previewFillOrder
     total_collateral_raw = demo_fill.get("totalCollateral")
-
+    
+    # Decode the SDK's fill premium: it's already calculated by previewFillOrder
+    # and is in 6-decimal USDC format when fillSizeUsdc was provided (20_000000)
+    premium_for_fill_usd = (
+        float(total_collateral_raw) / 1_000_000
+        if total_collateral_raw is not None
+        else None
+    )
+    
+    # Collateral allocated for this demo fill is also totalCollateral
+    # (same value, but semantically the collateral budget used for the fill)
     collateral_for_fill_usd = (
         float(total_collateral_raw) / 1_000_000
         if total_collateral_raw is not None
         else None
     )
+    
     raw_price = int(order.get("price", 0))
-    raw_num_contracts = float(demo_fill["numContracts"]) if demo_fill and demo_fill.get("numContracts") is not None else None
-    premium_for_fill_usd = (
-        (raw_price / 1e8) * (raw_num_contracts / 1e6)
-        if raw_num_contracts is not None
-        else None
-    )
 
     return {
         "ticker": synthesize_ticker(order, asset),
